@@ -1,0 +1,4 @@
+requests>=2.31
+Jinja2>=3.1
+playwright>=1.45   # 只有輸出 PNG 時需要；安裝後執行 `playwright install chromium`
+pytest>=8          # 開發用
