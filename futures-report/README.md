@@ -47,11 +47,25 @@ HTML 是單一檔案（圖表程式庫已內嵌），直接用瀏覽器打開即
 
 顏色採台股慣例：紅＝漲／多、綠＝跌／空。
 
-## 自動排程範例（Linux cron，週一到週五 16:50）
+## 每天自動傳到 Telegram（GitHub Actions）
 
-```cron
-50 16 * * 1-5  cd /path/to/futures-report && python -m report --png daily >> logs.txt 2>&1
-```
+`.github/workflows/futures-report.yml` 會在週一到週五台灣時間 17:10 自動執行 `python -m report auto`：
+
+1. 補齊最近 75 天還沒抓的資料（第一次執行會自動回補歷史，約需 10–20 分鐘）
+2. 如果今天有新資料，就產生 PNG 並用 Telegram 機器人傳出
+3. 把累積的資料庫 `data/report.db` 存回專案，隔天接著用
+
+設定步驟：
+
+1. **建立 Telegram 機器人**：在 Telegram 搜尋 `@BotFather` → 傳 `/newbot` → 依指示取名，最後會拿到一串 token（像 `123456:ABC-xyz...`）。
+2. **取得聊天室 ID**：先對你的機器人傳一句任意訊息，再用瀏覽器打開
+   `https://api.telegram.org/bot<你的token>/getUpdates`，找到 `"chat":{"id":` 後面那串數字。
+3. **把兩個值存進 GitHub**：專案頁面 → Settings → Secrets and variables → Actions → New repository secret，
+   分別新增 `TELEGRAM_BOT_TOKEN`、`TELEGRAM_CHAT_ID`。
+4. **啟用 Actions**：專案頁面 → Actions 分頁 → 按下啟用按鈕（fork 出來的專案預設關閉）。
+5. **手動測試一次**：Actions → 台指期籌碼日報 → Run workflow。
+
+排程只會在預設分支（master）上執行，所以這些檔案要先合併進 master。
 
 ## 尚待確認
 

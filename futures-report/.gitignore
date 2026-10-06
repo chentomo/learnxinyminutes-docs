@@ -1,4 +1,4 @@
-data/
+data/demo.db
 output/
 __pycache__/
 .pytest_cache/

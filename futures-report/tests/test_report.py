@@ -55,3 +55,26 @@ def test_render_demo_and_missing_fields():
     hist[-1]["vix"] = None
     html = render_html(build_view(hist, "測試"))
     assert "—" in html
+
+
+def test_send_telegram_photo(monkeypatch, tmp_path):
+    from report import notify
+
+    png = tmp_path / "r.png"
+    png.write_bytes(b"\x89PNG")
+    sent = {}
+
+    class Resp:
+        ok = True
+
+    def fake_post(url, data, files, timeout):
+        sent.update(url=url, data=data, name=files["photo"][0])
+        return Resp()
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:abc")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "42")
+    monkeypatch.setattr(notify.requests, "post", fake_post)
+    assert notify.telegram_configured()
+    notify.send_telegram_photo(png, "日報")
+    assert sent == {"url": "https://api.telegram.org/bot123:abc/sendPhoto",
+                    "data": {"chat_id": "42", "caption": "日報"}, "name": "r.png"}

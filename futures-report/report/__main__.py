@@ -4,6 +4,7 @@
   python -m report daily [--date YYYY-MM-DD]  抓當日資料、存檔並產生報表
   python -m report backfill --start D --end D 回補歷史資料（趨勢圖需要約 40 個交易日）
   python -m report render [--date YYYY-MM-DD] 只用資料庫裡的資料重新產生報表
+  python -m report auto [--force]             自動模式：補齊近期資料，有今日資料就出圖並傳到 Telegram
 
 加上 --png 會同時輸出截圖。
 """
@@ -27,7 +28,7 @@ def _date(s: str) -> dt.date:
     return dt.date.fromisoformat(s)
 
 
-def write_report(store: Store, date: str, args) -> None:
+def write_report(store: Store, date: str, args) -> Path | None:
     history = store.history(date, CHART_DAYS + 5)
     if not history or history[-1]["date"] != date:
         sys.exit(f"資料庫裡沒有 {date} 的資料")
@@ -42,6 +43,36 @@ def write_report(store: Store, date: str, args) -> None:
         png_path = html_path.with_suffix(".png")
         html_to_png(html_path, png_path)
         print(f"PNG ：{png_path}")
+        return png_path
+    return None
+
+
+def backfill(store: Store, start: dt.date, end: dt.date) -> None:
+    """抓取 start～end 之間資料庫還沒有的交易日。"""
+    from .collect import collect_day
+
+    day = start
+    while day <= end:
+        if day.weekday() < 5 and _incomplete(store.get(day.isoformat())):
+            rec = collect_day(day)
+            log.info("%s %s", day, "OK" if rec else "休市／無資料")
+            if rec:
+                store.save(rec)
+            time.sleep(1.5)  # 別對期交所太密集
+        day += dt.timedelta(days=1)
+
+
+def _incomplete(rec: dict | None) -> bool:
+    """沒有資料，或關鍵籌碼資料當時還沒公布，都要重抓。"""
+    if rec is None:
+        return True
+    return not (rec.get("inst") or {}).get("TXF") or not rec.get("large")
+
+
+def taipei_today() -> dt.date:
+    from zoneinfo import ZoneInfo
+
+    return dt.datetime.now(ZoneInfo("Asia/Taipei")).date()
 
 
 def main(argv=None) -> None:
@@ -62,6 +93,9 @@ def main(argv=None) -> None:
     p.add_argument("--end", type=_date, default=dt.date.today())
     p = sub.add_parser("render")
     p.add_argument("--date", type=_date)
+    p = sub.add_parser("auto")
+    p.add_argument("--days", type=int, default=75, help="往回補齊幾天的資料")
+    p.add_argument("--force", action="store_true", help="今天沒有新資料也送出最近一天的日報（測試用）")
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -86,22 +120,34 @@ def main(argv=None) -> None:
         store.save(rec)
         write_report(store, rec["date"], args)
     elif args.cmd == "backfill":
-        from .collect import collect_day
-
-        day = args.start
-        while day <= args.end:
-            if day.weekday() < 5 and store.get(day.isoformat()) is None:
-                rec = collect_day(day)
-                log.info("%s %s", day, "OK" if rec else "休市／無資料")
-                if rec:
-                    store.save(rec)
-                time.sleep(1.5)  # 別對期交所太密集
-            day += dt.timedelta(days=1)
+        backfill(store, args.start, args.end)
     elif args.cmd == "render":
         date = args.date.isoformat() if args.date else store.latest_date()
         if not date:
             sys.exit("資料庫是空的，請先執行 daily 或 backfill")
         write_report(store, date, args)
+    elif args.cmd == "auto":
+        run_auto(store, args)
+
+
+def run_auto(store: Store, args) -> None:
+    from .notify import send_telegram_photo, telegram_configured
+
+    today = taipei_today()
+    backfill(store, today - dt.timedelta(days=args.days), today)
+    latest = store.latest_date()
+    if latest is None:
+        sys.exit("抓不到任何資料，請檢查上面的錯誤訊息")
+    if latest != today.isoformat() and not args.force:
+        print(f"今天（{today}）沒有新資料（休市或尚未公布），最近一筆是 {latest}，不送出")
+        return
+    args.png = True
+    png = write_report(store, latest, args)
+    if telegram_configured():
+        send_telegram_photo(png, f"{args.title} {latest}")
+        print("已傳送到 Telegram")
+    else:
+        print("沒有設定 TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID，略過傳送")
 
 
 if __name__ == "__main__":
